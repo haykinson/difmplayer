@@ -148,8 +148,8 @@ public final class AudioAddictAPI {
         return historyItems.map { $0.toTrack() }
     }
 
-    // Fetch and resolve the direct stream URL from a .pls playlist
-    public func fetchStreamURL(channelKey: String, network: Network, quality: AudioQuality, listenKey: String?) async throws -> URL {
+    // Fetch and resolve direct stream URLs from a .pls playlist
+    public func fetchStreamURLs(channelKey: String, network: Network, quality: AudioQuality, listenKey: String?) async throws -> [URL] {
         let playlistURLString: String
         let cleanKey = listenKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
@@ -163,47 +163,59 @@ public final class AudioAddictAPI {
             throw APIError.invalidURL
         }
 
-        let (data, _) = try await session.data(from: playlistURL)
-        guard let text = String(data: data, encoding: .utf8) else {
-            throw APIError.playlistEmpty
-        }
+        var streamURLs: [URL] = []
 
-        // Parse PLS INI format: look for File1=..., File2=...
-        let lines = text.components(separatedBy: .newlines)
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.lowercased().hasPrefix("file1=") || trimmed.lowercased().hasPrefix("file=") {
-                let parts = trimmed.split(separator: "=", maxSplits: 1).map(String.init)
-                if parts.count == 2 {
-                    let streamAddress = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
-                    if let streamURL = URL(string: streamAddress) {
-                        return streamURL
+        if let (data, _) = try? await session.data(from: playlistURL),
+           let text = String(data: data, encoding: .utf8) {
+            let lines = text.components(separatedBy: .newlines)
+            for line in lines {
+                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.lowercased().hasPrefix("file") && trimmed.contains("=") {
+                    let parts = trimmed.split(separator: "=", maxSplits: 1).map(String.init)
+                    if parts.count == 2 {
+                        let streamAddress = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
+                        if let streamURL = URL(string: streamAddress) {
+                            streamURLs.append(streamURL)
+                        }
                     }
                 }
             }
         }
 
-        // If File1 wasn't found, try any FileX=
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.lowercased().hasPrefix("file") && trimmed.contains("=") {
-                let parts = trimmed.split(separator: "=", maxSplits: 1).map(String.init)
-                if parts.count == 2 {
-                    let streamAddress = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
-                    if let streamURL = URL(string: streamAddress) {
-                        return streamURL
-                    }
-                }
-            }
+        if !streamURLs.isEmpty {
+            return streamURLs
         }
 
-        // Fallback direct URL if playlist couldn't be parsed
+        // Direct fallback URLs if playlist failed or was empty
         if !cleanKey.isEmpty {
-            if let fallbackURL = URL(string: "http://prem1.\(network.shortName).com:80/\(channelKey)?\(cleanKey)") {
-                return fallbackURL
+            let suffix: String
+            switch quality {
+            case .premiumHigh: suffix = "_hi"
+            case .premiumStandard: suffix = ""
+            case .premiumMedium: suffix = "_aac"
+            case .premiumLow: suffix = "_low"
+            case .publicMedium: suffix = "_hi"
             }
+
+            let fallbacks = [
+                "http://prem1.\(network.shortName).com:80/\(channelKey)\(suffix)?\(cleanKey)",
+                "http://prem4.\(network.shortName).com:80/\(channelKey)\(suffix)?\(cleanKey)",
+                "http://prem2.\(network.shortName).com:80/\(channelKey)\(suffix)?\(cleanKey)"
+            ]
+            for addr in fallbacks {
+                if let url = URL(string: addr) {
+                    streamURLs.append(url)
+                }
+            }
+            return streamURLs
         }
 
         throw APIError.playlistEmpty
+    }
+
+    public func fetchStreamURL(channelKey: String, network: Network, quality: AudioQuality, listenKey: String?) async throws -> URL {
+        let urls = try await fetchStreamURLs(channelKey: channelKey, network: network, quality: quality, listenKey: listenKey)
+        guard let first = urls.first else { throw APIError.playlistEmpty }
+        return first
     }
 }

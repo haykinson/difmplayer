@@ -129,7 +129,15 @@ public struct BottomPlayerBar: View {
 
                 // Live status indicator & elapsed time
                 HStack(spacing: 6) {
-                    if player.isPlaying {
+                    if let err = player.playbackError {
+                        Circle()
+                            .fill(Color.red)
+                            .frame(width: 6, height: 6)
+                        Text(err)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.red.opacity(0.9))
+                            .lineLimit(1)
+                    } else if player.isPlaying {
                         Circle()
                             .fill(Color(red: 0.12, green: 0.84, blue: 0.38))
                             .frame(width: 6, height: 6)
@@ -145,7 +153,7 @@ public struct BottomPlayerBar: View {
                             .foregroundColor(.orange)
                     }
 
-                    if player.elapsedSeconds > 0 {
+                    if player.elapsedSeconds > 0 && player.playbackError == nil {
                         Text(formatTime(player.elapsedSeconds))
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundColor(.white.opacity(0.4))

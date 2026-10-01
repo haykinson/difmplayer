@@ -12,6 +12,7 @@ public final class PlayerManager: ObservableObject {
     private var timeObserverToken: Any?
     private var statusObserver: NSKeyValueObservation?
     private var timeControlObserver: NSKeyValueObservation?
+    private var likelyToKeepUpObserver: NSKeyValueObservation?
     private var cancellables = Set<AnyCancellable>()
 
     // Track polling timer
@@ -50,6 +51,7 @@ public final class PlayerManager: ObservableObject {
         elapsedTimer?.invalidate()
         statusObserver?.invalidate()
         timeControlObserver?.invalidate()
+        likelyToKeepUpObserver?.invalidate()
         player?.pause()
         player = nil
     }
@@ -64,12 +66,20 @@ public final class PlayerManager: ObservableObject {
         // Clean up previous playback observers
         statusObserver?.invalidate()
         timeControlObserver?.invalidate()
+        likelyToKeepUpObserver?.invalidate()
 
         Task { @MainActor in
             do {
                 let auth = AuthManager.shared
                 let quality = auth.selectedQuality
                 let listenKey = auth.listenKey
+
+                guard !listenKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    self.isBuffering = false
+                    self.isPlaying = false
+                    self.playbackError = "DI.FM Premium Listen Key required. Click 'Log In' to connect."
+                    return
+                }
 
                 let streamURL = try await AudioAddictAPI.shared.fetchStreamURL(
                     channelKey: channel.key,
@@ -78,19 +88,23 @@ public final class PlayerManager: ObservableObject {
                     listenKey: listenKey
                 )
 
-                // Setup AVPlayer
+                // Setup AVPlayer for live streaming
                 let item = AVPlayerItem(url: streamURL)
+                item.preferredForwardBufferDuration = 1.0
                 self.playerItem = item
 
                 if self.player == nil {
-                    self.player = AVPlayer(playerItem: item)
+                    let newPlayer = AVPlayer(playerItem: item)
+                    newPlayer.automaticallyWaitsToMinimizeStalling = false
+                    self.player = newPlayer
                 } else {
+                    self.player?.automaticallyWaitsToMinimizeStalling = false
                     self.player?.replaceCurrentItem(with: item)
                 }
 
                 self.player?.volume = self.volume
                 self.setupObservers(for: item)
-                self.player?.play()
+                self.player?.playImmediately(atRate: 1.0)
 
                 self.startTrackPolling(for: channel, network: network)
                 self.updateNowPlayingInfo()
@@ -126,8 +140,9 @@ public final class PlayerManager: ObservableObject {
 
     public func resume() {
         if player != nil {
-            player?.play()
+            player?.playImmediately(atRate: 1.0)
             isPlaying = true
+            isBuffering = false
             updateNowPlayingInfo()
         } else if let channel = currentChannel {
             play(channel: channel)
@@ -178,6 +193,7 @@ public final class PlayerManager: ObservableObject {
                     self.isBuffering = false
                     self.isPlaying = true
                     self.playbackError = nil
+                    self.player?.playImmediately(atRate: 1.0)
                 case .failed:
                     self.isBuffering = false
                     self.isPlaying = false
@@ -190,6 +206,18 @@ public final class PlayerManager: ObservableObject {
             }
         }
 
+        likelyToKeepUpObserver = item.observe(\.isPlaybackLikelyToKeepUp, options: [.new]) { [weak self] item, _ in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if item.isPlaybackLikelyToKeepUp {
+                    self.isBuffering = false
+                    self.isPlaying = true
+                    self.playbackError = nil
+                    self.player?.playImmediately(atRate: 1.0)
+                }
+            }
+        }
+
         if let player = player {
             timeControlObserver = player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
                 DispatchQueue.main.async {
@@ -198,11 +226,14 @@ public final class PlayerManager: ObservableObject {
                     case .playing:
                         self.isPlaying = true
                         self.isBuffering = false
+                        self.playbackError = nil
                     case .paused:
                         self.isPlaying = false
                         self.isBuffering = false
                     case .waitingToPlayAtSpecifiedRate:
-                        self.isBuffering = true
+                        if !self.isPlaying {
+                            self.isBuffering = true
+                        }
                     @unknown default:
                         break
                     }
