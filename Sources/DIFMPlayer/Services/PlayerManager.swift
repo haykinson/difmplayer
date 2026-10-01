@@ -38,8 +38,16 @@ public final class PlayerManager: ObservableObject {
 
     private init() {
         let savedVol = UserDefaults.standard.float(forKey: "difm_player_volume")
-        self.volume = savedVol > 0 ? savedVol : 0.8
+        self.volume = savedVol > 0.01 ? savedVol : 0.8
         setupRemoteCommands()
+    }
+
+    public func setVolume(_ newVolume: Float) {
+        let clamped = max(0.0, min(1.0, newVolume))
+        self.volume = clamped
+        self.player?.volume = clamped
+        self.player?.isMuted = false
+        UserDefaults.standard.set(clamped, forKey: "difm_player_volume")
     }
 
     deinit {
@@ -54,6 +62,7 @@ public final class PlayerManager: ObservableObject {
         likelyToKeepUpObserver?.invalidate()
         player?.pause()
         player = nil
+        playerItem = nil
     }
 
     // MARK: - Playback Control
@@ -63,10 +72,17 @@ public final class PlayerManager: ObservableObject {
         self.playbackError = nil
         self.isBuffering = true
 
-        // Clean up previous playback observers
+        // Clean up previous playback and observers completely
         statusObserver?.invalidate()
+        statusObserver = nil
         timeControlObserver?.invalidate()
+        timeControlObserver = nil
         likelyToKeepUpObserver?.invalidate()
+        likelyToKeepUpObserver = nil
+
+        player?.pause()
+        player = nil
+        playerItem = nil
 
         Task { @MainActor in
             do {
@@ -88,23 +104,22 @@ public final class PlayerManager: ObservableObject {
                     listenKey: listenKey
                 )
 
-                // Setup AVPlayer for live streaming
-                let item = AVPlayerItem(url: streamURL)
-                item.preferredForwardBufferDuration = 1.0
+                print("[PlayerManager] Streaming \(channel.name) from \(streamURL)")
+
+                // Setup asset with explicit MIME type for reliable audio stream decoding
+                let asset = AVURLAsset(url: streamURL, options: [
+                    "AVURLAssetOutOfBandMIMETypeKey": quality.mimeType
+                ])
+                let item = AVPlayerItem(asset: asset)
                 self.playerItem = item
 
-                if self.player == nil {
-                    let newPlayer = AVPlayer(playerItem: item)
-                    newPlayer.automaticallyWaitsToMinimizeStalling = false
-                    self.player = newPlayer
-                } else {
-                    self.player?.automaticallyWaitsToMinimizeStalling = false
-                    self.player?.replaceCurrentItem(with: item)
-                }
+                let newPlayer = AVPlayer(playerItem: item)
+                newPlayer.volume = self.volume
+                newPlayer.isMuted = false
+                self.player = newPlayer
 
-                self.player?.volume = self.volume
-                self.setupObservers(for: item)
-                self.player?.playImmediately(atRate: 1.0)
+                self.setupObservers(for: item, player: newPlayer)
+                newPlayer.playImmediately(atRate: 1.0)
 
                 self.startTrackPolling(for: channel, network: network)
                 self.updateNowPlayingInfo()
@@ -112,6 +127,7 @@ public final class PlayerManager: ObservableObject {
                 self.isBuffering = false
                 self.isPlaying = false
                 self.playbackError = "Failed to load stream: \(error.localizedDescription)"
+                print("[PlayerManager] Failed to load stream: \(error)")
             }
         }
     }
@@ -139,8 +155,10 @@ public final class PlayerManager: ObservableObject {
     }
 
     public func resume() {
-        if player != nil {
-            player?.playImmediately(atRate: 1.0)
+        if let player = player {
+            player.volume = self.volume
+            player.isMuted = false
+            player.playImmediately(atRate: 1.0)
             isPlaying = true
             isBuffering = false
             updateNowPlayingInfo()
@@ -184,8 +202,8 @@ public final class PlayerManager: ObservableObject {
 
     // MARK: - AVPlayer Observers
 
-    private func setupObservers(for item: AVPlayerItem) {
-        statusObserver = item.observe(\.status, options: [.new, .old]) { [weak self] item, _ in
+    private func setupObservers(for item: AVPlayerItem, player: AVPlayer) {
+        statusObserver = item.observe(\.status, options: [.new]) { [weak self] item, _ in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 switch item.status {
@@ -193,11 +211,12 @@ public final class PlayerManager: ObservableObject {
                     self.isBuffering = false
                     self.isPlaying = true
                     self.playbackError = nil
-                    self.player?.playImmediately(atRate: 1.0)
                 case .failed:
                     self.isBuffering = false
                     self.isPlaying = false
-                    self.playbackError = item.error?.localizedDescription ?? "Playback error"
+                    let desc = item.error?.localizedDescription ?? "Playback error"
+                    self.playbackError = desc
+                    print("[PlayerManager] Item error: \(desc)")
                 case .unknown:
                     break
                 @unknown default:
@@ -206,37 +225,21 @@ public final class PlayerManager: ObservableObject {
             }
         }
 
-        likelyToKeepUpObserver = item.observe(\.isPlaybackLikelyToKeepUp, options: [.new]) { [weak self] item, _ in
+        timeControlObserver = player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                if item.isPlaybackLikelyToKeepUp {
-                    self.isBuffering = false
+                switch player.timeControlStatus {
+                case .playing:
                     self.isPlaying = true
+                    self.isBuffering = false
                     self.playbackError = nil
-                    self.player?.playImmediately(atRate: 1.0)
-                }
-            }
-        }
-
-        if let player = player {
-            timeControlObserver = player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
-                DispatchQueue.main.async {
-                    guard let self = self else { return }
-                    switch player.timeControlStatus {
-                    case .playing:
-                        self.isPlaying = true
-                        self.isBuffering = false
-                        self.playbackError = nil
-                    case .paused:
-                        self.isPlaying = false
-                        self.isBuffering = false
-                    case .waitingToPlayAtSpecifiedRate:
-                        if !self.isPlaying {
-                            self.isBuffering = true
-                        }
-                    @unknown default:
-                        break
-                    }
+                case .paused:
+                    self.isPlaying = false
+                    self.isBuffering = false
+                case .waitingToPlayAtSpecifiedRate:
+                    self.isBuffering = true
+                @unknown default:
+                    break
                 }
             }
         }

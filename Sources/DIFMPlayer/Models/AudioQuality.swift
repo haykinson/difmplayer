@@ -42,4 +42,13 @@ public enum AudioQuality: String, CaseIterable, Identifiable, Codable {
     public var isPremiumOnly: Bool {
         return self != .publicMedium
     }
+
+    public var mimeType: String {
+        switch self {
+        case .premiumHigh, .premiumStandard, .publicMedium:
+            return "audio/mpeg"
+        case .premiumMedium, .premiumLow:
+            return "audio/aac"
+        }
+    }
 }

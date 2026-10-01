@@ -198,9 +198,9 @@ public struct BottomPlayerBar: View {
                 HStack(spacing: 6) {
                     Button(action: {
                         if player.volume > 0 {
-                            player.volume = 0
+                            player.setVolume(0)
                         } else {
-                            player.volume = 0.8
+                            player.setVolume(0.8)
                         }
                     }) {
                         Image(systemName: volumeIcon)
@@ -210,9 +210,15 @@ public struct BottomPlayerBar: View {
                     }
                     .buttonStyle(.plain)
 
-                    Slider(value: $player.volume, in: 0...1)
-                        .accentColor(Color(red: 0.12, green: 0.84, blue: 0.38))
-                        .frame(width: 75)
+                    Slider(
+                        value: Binding(
+                            get: { player.volume },
+                            set: { player.setVolume($0) }
+                        ),
+                        in: 0...1
+                    )
+                    .accentColor(Color(red: 0.12, green: 0.84, blue: 0.38))
+                    .frame(width: 75)
                 }
 
                 // Mini Mode Toggle Button
