@@ -203,7 +203,7 @@ public final class PlayerManager: ObservableObject {
     // MARK: - AVPlayer Observers
 
     private func setupObservers(for item: AVPlayerItem, player: AVPlayer) {
-        statusObserver = item.observe(\.status, options: [.new]) { [weak self] item, _ in
+        statusObserver = item.observe(\.status, options: [.new, .initial]) { [weak self] item, _ in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 switch item.status {
@@ -211,6 +211,7 @@ public final class PlayerManager: ObservableObject {
                     self.isBuffering = false
                     self.isPlaying = true
                     self.playbackError = nil
+                    player.play()
                 case .failed:
                     self.isBuffering = false
                     self.isPlaying = false
@@ -225,7 +226,7 @@ public final class PlayerManager: ObservableObject {
             }
         }
 
-        timeControlObserver = player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
+        timeControlObserver = player.observe(\.timeControlStatus, options: [.new, .initial]) { [weak self] player, _ in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 switch player.timeControlStatus {
@@ -237,7 +238,9 @@ public final class PlayerManager: ObservableObject {
                     self.isPlaying = false
                     self.isBuffering = false
                 case .waitingToPlayAtSpecifiedRate:
-                    self.isBuffering = true
+                    if !self.isPlaying {
+                        self.isBuffering = true
+                    }
                 @unknown default:
                     break
                 }

@@ -154,9 +154,9 @@ public final class AudioAddictAPI {
         let cleanKey = listenKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
         if !cleanKey.isEmpty && quality != .publicMedium {
-            playlistURLString = "https://listen.\(network.shortName).com/\(quality.rawValue)/\(channelKey).pls?listen_key=\(cleanKey)"
+            playlistURLString = "\(network.listenURL)/\(quality.rawValue)/\(channelKey).pls?listen_key=\(cleanKey)"
         } else {
-            playlistURLString = "http://listen.\(network.shortName).com/public3/\(channelKey).pls"
+            playlistURLString = "\(network.listenURL)/public3/\(channelKey).pls"
         }
 
         guard let playlistURL = URL(string: playlistURLString) else {
@@ -198,9 +198,9 @@ public final class AudioAddictAPI {
             }
 
             let fallbacks = [
-                "http://prem1.\(network.shortName).com:80/\(channelKey)\(suffix)?\(cleanKey)",
-                "http://prem4.\(network.shortName).com:80/\(channelKey)\(suffix)?\(cleanKey)",
-                "http://prem2.\(network.shortName).com:80/\(channelKey)\(suffix)?\(cleanKey)"
+                "http://prem1.\(network.domain):80/\(channelKey)\(suffix)?\(cleanKey)",
+                "http://prem4.\(network.domain):80/\(channelKey)\(suffix)?\(cleanKey)",
+                "http://prem2.\(network.domain):80/\(channelKey)\(suffix)?\(cleanKey)"
             ]
             for addr in fallbacks {
                 if let url = URL(string: addr) {

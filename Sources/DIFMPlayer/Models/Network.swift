@@ -15,6 +15,13 @@ public struct Network: Identifiable, Hashable, Codable {
         self.description = description
     }
 
+    public var domain: String {
+        switch id {
+        case "di": return "di.fm"
+        default: return "\(shortName).com"
+        }
+    }
+
     public static let difm = Network(
         id: "di",
         name: "DI.FM",
